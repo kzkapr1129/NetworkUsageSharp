@@ -19,7 +19,7 @@ namespace NetworkMonitorSharp
         private Dictionary<string, MIB_TCPROW2> _waitingConnections = new Dictionary<string, MIB_TCPROW2>();
         // コネクションごとの通信量の最新値
         private Dictionary<string, TCP_ESTATS_DATA_ROD_v0> _computingConnections = new Dictionary<string, TCP_ESTATS_DATA_ROD_v0>();
-        // トータル通信量の合算対象一覧
+        // 通信量の合算対象一覧
         private ArrayList _totalingTargets = new ArrayList();
 
         public NetworkMonitor()
