@@ -220,6 +220,16 @@ namespace NetworkMonitorSharp
         {
             UInt64 inBytes = 0;
             UInt64 outBytes = 0;
+
+            // 通信中のもの(今後増加する可能性があるもの)を合算する
+            foreach (var items in _computingConnections)
+            {
+                var stats = items.Value;
+                inBytes += stats.DataBytesIn;
+                outBytes += stats.DataBytesOut;
+            }
+
+            // 通信終了したもの一覧を合算する
             foreach(TCP_ESTATS_DATA_ROD_v0 stats in _totalingTargets)
             {
                 inBytes += stats.DataBytesIn;
