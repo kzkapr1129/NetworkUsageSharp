@@ -1,7 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Security.Principal;
+using System.Text;
 using System.Threading;
 
 namespace NetworkMonitorSharp
@@ -36,6 +39,29 @@ namespace NetworkMonitorSharp
             }
         }
 
+        static void sockSendInfinity()
+        {
+            Thread.Sleep(5 * 1000);
+
+            IPHostEntry ipHostInfo = Dns.GetHostEntry(Dns.GetHostName());
+            IPAddress ipAddress = ipHostInfo.AddressList[4];
+            IPEndPoint remoteEP = new IPEndPoint(ipAddress, 50000);
+
+            // Create a TCP/IP  socket.  
+            Socket sender = new Socket(ipAddress.AddressFamily,
+                SocketType.Stream, ProtocolType.Tcp);
+
+            sender.Connect(remoteEP);
+
+            while (true)
+            {
+                byte[] msg = Encoding.ASCII.GetBytes("Hello");
+                sender.Send(msg);
+
+                Thread.Sleep(2000);
+            }
+        }
+
         static void Main(string[] args)
         {
             Thread.GetDomain().SetPrincipalPolicy(PrincipalPolicy.WindowsPrincipal);
@@ -46,7 +72,9 @@ namespace NetworkMonitorSharp
                 return;
             }
 
-            Thread t = new Thread(new ThreadStart(httpGetInfinity));
+            new SockSrv().start();
+
+            Thread t = new Thread(new ThreadStart(sockSendInfinity));
             t.Start();
 
             NetworkMonitor monitor = new NetworkMonitor();
