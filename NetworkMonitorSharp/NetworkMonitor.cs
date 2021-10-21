@@ -13,9 +13,14 @@ namespace NetworkMonitorSharp
 {
     class NetworkMonitor
     {
-        // Dictionary<string, MIB_TCPROW2> _lastConnections = new Dictionary<string, MIB_TCPROW2>();
-        private ArrayList _lastConnections = new ArrayList();
-        private Dictionary<string, TCP_ESTATS_DATA_ROD_v0> _totalConnections = new Dictionary<string, TCP_ESTATS_DATA_ROD_v0>();
+        // 現在のTCP接続一覧
+        private ArrayList _currentConnections = new ArrayList();
+        // setPerConnectionsで待機中のコネクション一覧
+        private Dictionary<string, MIB_TCPROW2> _waitingConnections = new Dictionary<string, MIB_TCPROW2>();
+        // コネクションごとの通信量の最新値
+        private Dictionary<string, TCP_ESTATS_DATA_ROD_v0> _computingConnections = new Dictionary<string, TCP_ESTATS_DATA_ROD_v0>();
+        // トータル通信量の合算対象一覧
+        private ArrayList _totalingTargets = new ArrayList();
 
         public NetworkMonitor()
         {
@@ -57,7 +62,7 @@ namespace NetworkMonitorSharp
                 }
 
                 // 監視対象のコネクション(MIB_TCPROW2)を保存する
-                _lastConnections.Clear();
+                _currentConnections.Clear();
                 int entrySize = Marshal.SizeOf(typeof(MIB_TCPROW2));
                 int nEntries = Marshal.ReadInt32(pBuf);
                 IntPtr tableStartAddr = pBuf + sizeof(int);
@@ -67,8 +72,9 @@ namespace NetworkMonitorSharp
                     MIB_TCPROW2 tcpData = (MIB_TCPROW2)Marshal.PtrToStructure(pEntry, typeof(MIB_TCPROW2));
                     if (tcpData.dwOwningPid == Process.GetCurrentProcess().Id)
                     {
-                        var tcpDataClone = new MIB_TCPROW2(tcpData);
-                        _lastConnections.Add(tcpDataClone);
+                        // 自プロセスのTCPコネクションを発見した場合
+
+                        _currentConnections.Add(tcpData); // 現在の接続一覧に追加
                     }
                 }
             }
@@ -76,7 +82,32 @@ namespace NetworkMonitorSharp
                 Marshal.FreeHGlobal(pBuf);
             }
 
-            foreach (MIB_TCPROW2 connection in _lastConnections)
+            // 通信中のTCPリストと現在のリストを比較し、今回接続していないものだけを残す
+            foreach (MIB_TCPROW2 connection in _currentConnections)
+            {
+                String key = makeKey(connection);
+                if (_waitingConnections.ContainsKey(key))
+                {
+                    // 待機中のコネクション一覧に今回接続しているコネクションが存在した場合
+                    _waitingConnections.Remove(key);
+                }
+            }
+
+            // 通信が切断したと思われるもの(_waitingConnectionsの残っているもの)を合算対象とする
+            foreach (var item in _waitingConnections)
+            {
+                var key = item.Key;
+                if (_computingConnections.ContainsKey(key))
+                {
+                    var stats = _computingConnections[key];
+                    _totalingTargets.Add(stats);
+
+                    _computingConnections.Remove(key);
+                }
+            }
+
+            // コネクションごとに通信量の監視を開始する
+            foreach (MIB_TCPROW2 connection in _currentConnections)
             {
                 IntPtr buffRow = IntPtr.Zero;
                 try
@@ -92,6 +123,14 @@ namespace NetworkMonitorSharp
                         continue;
                     }
 
+                    // 待ち状態のコネクションを保存する
+                    string key = makeKey(connection);
+                    if (!_waitingConnections.ContainsKey(key))
+                    {
+                        // 新規登録の場合
+                        _waitingConnections.Add(key, connection);
+                    }
+
                 } finally
                 {
                     if (buffRow != IntPtr.Zero)
@@ -104,8 +143,10 @@ namespace NetworkMonitorSharp
 
         private void retriveUsage()
         {
-            foreach (MIB_TCPROW2 connection in _lastConnections)
+            foreach (var item in _waitingConnections)
             {
+                var connection = item.Value;
+
                 IntPtr buffRow = IntPtr.Zero;
                 IntPtr rod = IntPtr.Zero;
 
@@ -126,20 +167,15 @@ namespace NetworkMonitorSharp
                     //dumpTcpRowWithUsage(connection, rodData.DataBytesIn, rodData.DataBytesOut);
 
                     string key = makeKey(connection);
-                    if (_totalConnections.ContainsKey(key))
+                    if (_computingConnections.ContainsKey(key))
                     {
-                        // 過去に同じトランザクション(送信元アドレス・ポート、宛先アドレス・ポートの組み合わせ)が使われたことがある場合
-                        var lastRod = _totalConnections[key];
-                        if (lastRod.DataBytesIn <= 0)
-                        {
-                            // 前回が受信待ちの場合
-                            _totalConnections[key] = rodData; // 上書き保存
-                        }
+                        // 既存接続の場合
+                        _computingConnections[key] = rodData;
                     }
                     else
                     {
                         // 新規トランザクションの場合
-                        _totalConnections.Add(key, rodData);
+                        _computingConnections.Add(key, rodData);
                     }
                 }
                 finally
@@ -182,15 +218,14 @@ namespace NetworkMonitorSharp
 
         private void outputTotalBytes()
         {
-            UInt64 totalInBytes = 0;
-            UInt64 totalOutBytes = 0;
-            foreach (var item in _totalConnections)
+            UInt64 inBytes = 0;
+            UInt64 outBytes = 0;
+            foreach(TCP_ESTATS_DATA_ROD_v0 stats in _totalingTargets)
             {
-                TCP_ESTATS_DATA_ROD_v0 rod = item.Value;
-                totalInBytes += rod.DataBytesIn;
-                totalOutBytes += rod.DataBytesOut;
+                inBytes += stats.DataBytesIn;
+                outBytes += stats.DataBytesOut;
             }
-            Console.WriteLine($"Total In/Out: {totalInBytes} / {totalOutBytes} bytes");
+            Console.WriteLine($"Total In/Out bytes: {inBytes}/{outBytes} bytes");
         }
     }
 }
